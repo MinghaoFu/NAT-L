@@ -497,7 +497,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         return state_dict
 
-
 class TransformerEncoderLayer(nn.Module):
     """Encoder layer block.
 

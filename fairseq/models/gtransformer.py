@@ -22,9 +22,10 @@ from fairseq import options
 from fairseq import utils
 
 from fairseq.modules import (
-    AdaptiveSoftmax, CharacterTokenEmbedder, MultiheadAttention,
+    AdaptiveSoftmax, CharacterTokenEmbedder, MultiheadAttention, GroupMultiheadAttention,
     SimpleSinusoidalPositionalEmbedding, LearnedPositionalEmbedding
 )
+
 
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -38,6 +39,33 @@ def PositionalEmbedding(num_embeddings, embedding_dim, padding_idx):
     nn.init.normal_(m.weight, mean=0, std=0.02)
     nn.init.constant_(m.weight[padding_idx], 0)
     return m
+
+def tokens2tags_depricate(dict, tokens, eod):
+    def _toks2tags(tokens):
+        tags = []
+        next_tag = 1
+        for tok in tokens:
+            if tok in [dict.pad_index, dict.index(eod)]:
+                tags.append(0)
+            else:
+                tags.append(next_tag)
+                if tok == dict.eos_index:  # increase tag per </s>
+                    next_tag += 1
+        return tags
+    tok_tags = [_toks2tags(tokens) for tokens in tokens.data.cpu().numpy().tolist()]
+    tok_tags = torch.tensor(tok_tags, dtype=tokens.dtype, device=tokens.device)
+    return tok_tags
+
+def tokens2tags(dict, tokens, split_index):
+    '''
+        tokens: batched text, (batch, length)
+    '''
+    mask_tag = ~(tokens == dict.pad_index)
+    end_tag = (tokens == split_index).to(torch.int)
+    start_tag = torch.roll(end_tag, 1, -1)
+    start_tag[:, 0] = 1
+    tok_tags = torch.cumsum(start_tag, dim=1) * mask_tag.int()
+    return tok_tags
 
 class BertLayerNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-12):
@@ -54,7 +82,7 @@ class BertLayerNorm(nn.Module):
         x = (x - u) / torch.sqrt(s + self.variance_epsilon)
         return self.gamma * x + self.beta
 
-@register_model('bert_transformer_seq2seq')
+@register_model('gtransformer')
 class Transformer_nonautoregressive(FairseqModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
@@ -216,14 +244,15 @@ class Transformer_nonautoregressive(FairseqModel):
             decoder_embed_tokens = build_embedding(
                 tgt_dict, args.decoder_embed_dim, is_encoder=False, path=args.decoder_embed_path
             )
-
-        encoder = TransformerEncoder(args, src_dict, encoder_embed_tokens, args.encoder_embed_scale)
-        decoder = SelfTransformerDecoder(args, tgt_dict, decoder_embed_tokens, args.decoder_embed_scale)
+            
+        
+        encoder = GTransformerEncoder(args, src_dict, encoder_embed_tokens, args.encoder_embed_scale)
+        decoder = GTransformerDecoder(args, tgt_dict, decoder_embed_tokens, args.decoder_embed_scale)
         return Transformer_nonautoregressive(encoder, decoder)
 
 
 
-class SelfTransformerDecoder(FairseqIncrementalDecoder):
+class GTransformerDecoder(FairseqIncrementalDecoder):
     """
     Transformer decoder consisting of *args.decoder_layers* layers. Each layer
     is a :class:`TransformerDecoderLayer`.
@@ -478,7 +507,7 @@ class TransformerDecoderLayer(nn.Module):
         self.need_attn = need_attn
 
 
-class TransformerEncoder(FairseqEncoder):
+class GTransformerEncoder(FairseqEncoder):
     """
     Transformer encoder consisting of *args.encoder_layers* layers. Each layer
     is a :class:`TransformerEncoderLayer`.
@@ -492,6 +521,7 @@ class TransformerEncoder(FairseqEncoder):
 
     def __init__(self, args, dictionary, embed_tokens, embed_scale=None, left_pad=False):
         super().__init__(dictionary)
+        self.split_token = dictionary.indices['.']
         self.dropout = args.dropout
 
         embed_dim = embed_tokens.embedding_dim
@@ -511,7 +541,7 @@ class TransformerEncoder(FairseqEncoder):
 
         self.layers = nn.ModuleList([])
         self.layers.extend([
-            TransformerEncoderLayer(args)
+            GTransformerEncoderLayer(args)
             for i in range(args.encoder_layers)
         ])
         self.register_buffer('version', torch.Tensor([2]))
@@ -534,6 +564,8 @@ class TransformerEncoder(FairseqEncoder):
                   padding elements of shape `(batch, src_len)`
         """
         # embed tokens and positions
+        src_tags = tokens2tags(self.dictionary, src_tokens, self.split_token)
+        local_attn_mask = src_tags.eq(self.padding_idx)
         x = self.embed_tokens(src_tokens)
         #assert (src_tokens.size(1) < self.embed_positions.weights.data.size(0))
         if self.embed_positions is not None:
@@ -553,7 +585,7 @@ class TransformerEncoder(FairseqEncoder):
 
         # encoder layers
         for layer in self.layers:
-            x = layer(x, encoder_padding_mask)
+            x = layer(x, src_tags, encoder_padding_mask)
         if self.normalize:
             x = self.layer_norm(x)
         
@@ -561,6 +593,7 @@ class TransformerEncoder(FairseqEncoder):
         predicted_lengths_logits[:, 0] += float('-inf')   # Cannot predict the len_token
         predicted_lengths = F.log_softmax(predicted_lengths_logits, dim=-1)
         x = x[1:, :, :]
+        
         if encoder_padding_mask is not None:
             encoder_padding_mask = encoder_padding_mask[:, 1:]
 
@@ -607,7 +640,7 @@ class TransformerEncoder(FairseqEncoder):
         return state_dict
 
 
-class TransformerEncoderLayer(nn.Module):
+class GTransformerEncoderLayer(nn.Module):
     """Encoder layer block.
     In the original paper each operation (multi-head attention or FFN) is
     postprocessed with: `dropout -> add residual -> layernorm`. In the
@@ -621,9 +654,13 @@ class TransformerEncoderLayer(nn.Module):
     """
 
     def __init__(self, args):
-        super().__init__()
+        super().__init__() 
         self.embed_dim = args.encoder_embed_dim
         self.self_attn = MultiheadAttention(
+            self.embed_dim, args.encoder_attention_heads,
+            dropout=args.attention_dropout,
+        )
+        self.group_attn = GroupMultiheadAttention(
             self.embed_dim, args.encoder_attention_heads,
             dropout=args.attention_dropout,
         )
@@ -634,7 +671,7 @@ class TransformerEncoderLayer(nn.Module):
         self.fc2 = nn.Linear(args.encoder_ffn_embed_dim, self.embed_dim)
         self.layer_norms = nn.ModuleList([BertLayerNorm(self.embed_dim) for i in range(2)])
 
-    def forward(self, x, encoder_padding_mask):
+    def forward(self, x, src_tags, encoder_padding_mask):
         """
         Args:
             x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
@@ -645,6 +682,7 @@ class TransformerEncoderLayer(nn.Module):
         """
         residual = x
         x = self.maybe_layer_norm(0, x, before=True)
+        x_group, group_attn = self.group_attn(query=x, key=x, value=x, key_padding_mask=encoder_padding_mask)
         x, _ = self.self_attn(query=x, key=x, value=x, key_padding_mask=encoder_padding_mask)
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = residual + x
@@ -666,7 +704,7 @@ class TransformerEncoderLayer(nn.Module):
         else:
             return x
 
-@register_model_architecture('bert_transformer_seq2seq', 'bert_transformer_seq2seq')
+@register_model_architecture('gtransformer', 'gtransformer')
 def base_architecture(args):
     args.encoder_embed_path = getattr(args, 'encoder_embed_path', None)
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
@@ -704,7 +742,7 @@ def base_architecture(args):
 
 
 
-@register_model_architecture('bert_transformer_seq2seq', 'bert_transformer_seq2seq_big')
+@register_model_architecture('gtransformer', 'gtransformer_big')
 def bi_transformer_lm_big(args):
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 1024)
     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 4096)

@@ -19,8 +19,8 @@ from fairseq.data import (
 from . import FairseqTask, register_task
 
 
-@register_task('translation_self')
-class TranslationSelfTask(FairseqTask):
+@register_task('translation_long')
+class TranslationLongTask(FairseqTask):
     """
     Translate from one (source) language to another (target) language.
     Args:
@@ -183,7 +183,7 @@ class TranslationSelfTask(FairseqTask):
             mask_range=self.args.mask_range,
             train=train,
             seed=seed,
-            set_corrupt=False
+            set_corrupt=True
         )
 
     def max_positions(self):

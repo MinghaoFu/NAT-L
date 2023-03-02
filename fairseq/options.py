@@ -442,6 +442,7 @@ def add_generation_args(parser):
     parser.add_argument('--decoding-iterations', default=None, type=int, metavar='N', help='number of decoding iterations in mask-predict')
     group.add_argument('--length-beam', default=5, type=int, metavar='N',
                        help='length beam size')
+    group.add_argument('--n-unrolled-step', default=10, type=int, help='number of unrolled generation in SUNDAE')
     #### other generation options ####
     group.add_argument('--beam', default=5, type=int, metavar='N',
                        help='beam size')

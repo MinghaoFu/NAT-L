@@ -124,6 +124,7 @@ class LanguagePairSelfDatasetMask(FairseqDataset):
         mask_range=False,
         train=True,
         seed=None,
+        set_corrupt=False,
     ):
         if tgt_dict is not None:
             assert src_dict.pad() == tgt_dict.pad()
@@ -147,6 +148,7 @@ class LanguagePairSelfDatasetMask(FairseqDataset):
         self.seed = seed
         self.random = np.random.RandomState(seed)
         self.seed = seed
+        self.set_corrupt = set_corrupt # if substitute mask operation with corrupting 
 
     def __getitem__(self, index):
         enc_source, dec_source, dec_target, ntokens = self._make_source_target(self.src[index], self.tgt[index])
@@ -154,6 +156,13 @@ class LanguagePairSelfDatasetMask(FairseqDataset):
 
     def __len__(self):
         return len(self.src)
+    
+    def _corrupt_text(self, text, mask_ind, vocab_size=None):
+        vocab_size = len(self.src_dict) if vocab_size is None else vocab_size
+        random_text = text.new(torch.randint(vocab_size, text.shape))
+        mask = text.new(text.shape).fill_(0)
+        mask[mask_ind] = 1
+        return mask * random_text + (1 - mask) * text
 
     def _make_source_target(self, source, target):
         if self.dynamic_length:
@@ -179,8 +188,13 @@ class LanguagePairSelfDatasetMask(FairseqDataset):
             else:
                 ind = self.random.choice(len(dec_source) , size=sample_size, replace=False)
             
-            dec_source[ind] = self.tgt_dict.mask()
-            dec_target[ind] = dec_target_cp[ind]
+            if self.set_corrupt is False:
+                dec_source[ind] = self.tgt_dict.mask()
+                dec_target[ind] = dec_target_cp[ind]
+            else:
+                #dec_source[ind] = self.tgt_dict.mask()
+                dec_source = self._corrupt_text(dec_source, ind)
+                dec_target[ind] = dec_target_cp[ind]
         else:
             dec_target = dec_target_cp
             dec_source[:] = self.tgt_dict.mask()

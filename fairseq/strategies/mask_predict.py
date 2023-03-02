@@ -38,11 +38,10 @@ class MaskPredict(DecodingStrategy):
             assign_single_value_long(tgt_tokens, mask_ind, tgt_dict.mask())
             assign_single_value_byte(tgt_tokens, pad_mask, tgt_dict.pad())
 
-            #print("Step: ", counter+1)
-            #print("Masking: ", convert_tokens(tgt_dict, tgt_tokens[0]))
             decoder_out = model.decoder(tgt_tokens, encoder_out)
             new_tgt_tokens, new_token_probs, all_token_probs = generate_step_with_prob(decoder_out)
             
+            visualize = convert_tokens(tgt_dict, new_tgt_tokens[1])
             assign_multi_value_long(token_probs, mask_ind, new_token_probs)
             assign_single_value_byte(token_probs, pad_mask, 1.0)
             

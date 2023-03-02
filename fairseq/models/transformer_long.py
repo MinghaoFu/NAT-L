@@ -11,9 +11,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from torch.distributions.categorical import Categorical
 
 from . import (
-    FairseqDecoder, FairseqEncoder, FairseqLanguageModel,
+    FairseqDecoder, FairseqEncoder, FairseqLanguageModel, FairseqEncoderDecoderModel,
     register_model, register_model_architecture,
     FairseqIncrementalDecoder, FairseqModel
 )
@@ -54,8 +55,25 @@ class BertLayerNorm(nn.Module):
         x = (x - u) / torch.sqrt(s + self.variance_epsilon)
         return self.gamma * x + self.beta
 
-@register_model('bert_transformer_seq2seq')
-class Transformer_nonautoregressive(FairseqModel):
+class LNATModel(FairseqEncoderDecoderModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
+        n_unrolled_step = self.decoder.n_unrolled_step
+        all_logits = []
+        encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
+        for _ in range(n_unrolled_step):
+            decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, **kwargs)
+            all_logits.append(decoder_out[0])
+            prev_output_tokens = Categorical(logits=decoder_out[0]).sample().detach()
+        
+        decoder_out[1]['all_logits'] = torch.cat(all_logits, axis=0)
+        decoder_out[1]['n_unrolled_step'] = n_unrolled_step
+        return decoder_out
+    
+@register_model('transformer_long')
+class Transformer_nonautoregressive(LNATModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
         self.apply(self.init_bert_weights)
@@ -140,6 +158,8 @@ class Transformer_nonautoregressive(FairseqModel):
                             help='scaling factor for embeddings used in decoder')
         parser.add_argument('--encoder-embed-scale', type=float,
                             help='scaling factor for embeddings used in encoder')
+        parser.add_argument('--n-unrolled-step', default=10, type=int,
+                            help='step of denoising in SUNDAE')
 
     @classmethod
     def build_model(cls, args, task):
@@ -221,8 +241,6 @@ class Transformer_nonautoregressive(FairseqModel):
         decoder = SelfTransformerDecoder(args, tgt_dict, decoder_embed_tokens, args.decoder_embed_scale)
         return Transformer_nonautoregressive(encoder, decoder)
 
-
-
 class SelfTransformerDecoder(FairseqIncrementalDecoder):
     """
     Transformer decoder consisting of *args.decoder_layers* layers. Each layer
@@ -292,6 +310,8 @@ class SelfTransformerDecoder(FairseqIncrementalDecoder):
         self.normalize = args.decoder_normalize_before and final_norm
         if self.normalize:
             self.layer_norm = BertLayerNorm(self.embed_dim)
+            
+        self.n_unrolled_step = args.n_unrolled_step
 
     def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None):
         """
@@ -551,7 +571,7 @@ class TransformerEncoder(FairseqEncoder):
         if not encoder_padding_mask.any():
             encoder_padding_mask = None
 
-        # encoder layers
+        # mask-predict encoder
         for layer in self.layers:
             x = layer(x, encoder_padding_mask)
         if self.normalize:
@@ -561,11 +581,12 @@ class TransformerEncoder(FairseqEncoder):
         predicted_lengths_logits[:, 0] += float('-inf')   # Cannot predict the len_token
         predicted_lengths = F.log_softmax(predicted_lengths_logits, dim=-1)
         x = x[1:, :, :]
+        
         if encoder_padding_mask is not None:
             encoder_padding_mask = encoder_padding_mask[:, 1:]
-
+        
         return {
-            'encoder_out': x,  # T x B x C
+            'encoder_out': x,  
             'encoder_padding_mask': encoder_padding_mask,  # B x T
             'predicted_lengths': predicted_lengths, # B x L
         }
@@ -666,7 +687,7 @@ class TransformerEncoderLayer(nn.Module):
         else:
             return x
 
-@register_model_architecture('bert_transformer_seq2seq', 'bert_transformer_seq2seq')
+@register_model_architecture('transformer_long', 'transformer_long')
 def base_architecture(args):
     args.encoder_embed_path = getattr(args, 'encoder_embed_path', None)
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
@@ -701,10 +722,13 @@ def base_architecture(args):
 
     args.bilm_mask_last_state = getattr(args, 'bilm_mask_last_state', False)
     args.bilm_add_bos = getattr(args, 'bilm_add_bos', False)
+    
+    args.n_unrolled_step = getattr(args, 'n_unrolled_step', False)
+    
 
 
 
-@register_model_architecture('bert_transformer_seq2seq', 'bert_transformer_seq2seq_big')
+@register_model_architecture('transformer_long', 'transformer_long_big')
 def bi_transformer_lm_big(args):
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 1024)
     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 4096)

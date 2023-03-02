@@ -91,6 +91,12 @@ def main(args):
         scorer = bleu.Scorer(tgt_dict.pad(), tgt_dict.eos(), tgt_dict.unk())
     num_sentences = 0
     has_target = True
+    len_diffs = {'total': 0, 'abs_total': 0, 'diff': [], 'num_shorter': 0, 'num_longer': 0}
+    g_hypo_str = []
+    g_src_str = []
+    g_tgt_str = []
+    g_hypo_tokens = []
+    g_alignment = []
     with progress_bar.build_progress_bar(args, itr) as t:
         wps_meter = TimeMeter()
         for sample in t:
@@ -107,6 +113,7 @@ def main(args):
             num_generated_tokens = sum(len(h[0]['tokens']) for h in hypos)
             gen_timer.stop(num_generated_tokens)
 
+            
             for i, sample_id in enumerate(sample['id'].tolist()):
                 has_target = sample['target'] is not None
 
@@ -129,12 +136,22 @@ def main(args):
                         target_str = tgt_dict.string(target_tokens, args.remove_bpe, escape_unk=True)
 
                 if not args.quiet:
+                    g_src_str.append(src_str)
+                    g_tgt_str.append(target_str)
+                    
                     if src_dict is not None:
-                        print('S-{}\t{}'.format(sample_id, src_str))
+                        if len(g_src_str) == 10:
+                            src_str = ' '.join(g_src_str)
+                            g_src_str = []
+                            print('S-{}\t{}'.format(sample_id, src_str))
                     if has_target:
-                        print('T-{}\t{}'.format(sample_id, target_str))
+                        if len(g_tgt_str) == 10:
+                            target_str = ' '.join(g_tgt_str)
+                            g_tgt_str = []
+                            print('T-{}\t{}'.format(sample_id, target_str))
 
                 # Process top predictions
+                
                 for j, hypo in enumerate(hypos[i][:args.nbest]):
                     hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
                         hypo_tokens=hypo['tokens'].int().cpu(),
@@ -144,16 +161,33 @@ def main(args):
                         tgt_dict=tgt_dict,
                         remove_bpe=args.remove_bpe,
                     )
+                    g_hypo_str.append(hypo_str)
+                    g_hypo_tokens.append(hypo_tokens)
+                    # g_alignment.append(alignment)
+                    if len(g_hypo_str) == 10:
+                        hypo_str = ' '.join(g_hypo_str)
+                        g_hypo_str = []
+                    else:
+                        continue 
 
                     if not args.quiet:
-                        print('H-{}\t{}\t{}'.format(sample_id, hypo['score'], hypo_str))
-                        print('P-{}\t{}'.format(
-                            sample_id,
-                            ' '.join(map(
-                                lambda x: '{:.4f}'.format(x),
-                                hypo['positional_scores'].tolist(),
-                            ))
-                        ))
+                        print('H-{}\t{}\n'.format(sample_id, hypo_str))
+                        # print('P-{}\t{}'.format(
+                        #     sample_id,
+                        #     ' '.join(map(
+                        #         lambda x: '{:.4f}'.format(x),
+                        #         hypo['positional_scores'].tolist(),
+                        #     ))
+                        # ))
+                        len_diff = len(hypo_tokens) - len(src_tokens)
+                        len_diffs['diff'].append(len_diff)
+                        if len_diff > 0:
+                            len_diffs['num_longer'] += 1
+                        elif len_diff < 0:
+                            len_diffs['num_shorter'] += 1
+                        len_diffs['total'] += len_diff
+                        len_diffs['abs_total'] += abs(len_diff)
+                        
 
                         if args.print_alignment:
                             print('A-{}\t{}'.format(
@@ -177,6 +211,7 @@ def main(args):
 
     print('| Translated {} sentences ({} tokens) in {:.1f}s ({:.2f} sentences/s, {:.2f} tokens/s)'.format(
         num_sentences, gen_timer.n, gen_timer.sum, num_sentences / gen_timer.sum, 1. / gen_timer.avg))
+    print('| Hypos length difference: {}'.format(len_diffs))
     if has_target:
         print('| Generate {} with beam={}: {}'.format(args.gen_subset, args.beam, scorer.result_string()))
     return scorer

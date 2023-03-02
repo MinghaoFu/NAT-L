@@ -198,7 +198,8 @@ def generate(strategy, encoder_input, models, tgt_dict, length_beam_size, gold_t
     max_len = beam.max().item()
     length_mask = torch.triu(src_tokens.new(max_len, max_len).fill_(1).long(), 1)
     length_mask = torch.stack([length_mask[beam[batch] - 1] for batch in range(bsz)], dim=0)
-    tgt_tokens = src_tokens.new(bsz, length_beam_size, max_len).fill_(tgt_dict.mask())
+    vocab_size = model.encoder.embed_tokens.weight.shape[0]
+    tgt_tokens = torch.randint(vocab_size, (bsz, length_beam_size, max_len)).to(src_tokens.device)
     tgt_tokens = (1 - length_mask) * tgt_tokens + length_mask * tgt_dict.pad()
     tgt_tokens = tgt_tokens.view(bsz * length_beam_size, max_len)
     

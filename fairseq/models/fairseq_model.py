@@ -69,7 +69,7 @@ class BaseFairseqModel(nn.Module):
         this additionally "upgrades" *state_dicts* from old checkpoints.
         """
         self.upgrade_state_dict(state_dict)
-        return super().load_state_dict(state_dict, strict)
+        return super().load_state_dict(state_dict, strict=True)
 
     def upgrade_state_dict(self, state_dict):
         """Upgrade old state dicts to work with newer code."""
@@ -180,7 +180,6 @@ class BaseFairseqModel(nn.Module):
     def hub_models(cls):
         return {}
 
-
 class FairseqEncoderDecoderModel(BaseFairseqModel):
     """Base class for encoder-decoder models.
 
@@ -197,7 +196,7 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
         assert isinstance(self.encoder, FairseqEncoder)
         assert isinstance(self.decoder, FairseqDecoder)
 
-    def forward(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
+    def forward(self, src_tokens, src_lengths, prev_output_tokens, n_unroll_step=10, **kwargs):
         """
         Run the forward pass for an encoder-decoder model.
 
@@ -221,7 +220,9 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
                 - a dictionary with any model-specific outputs
         """
         encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
-        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, **kwargs)
+        for _ in range(n_unroll_step):
+            decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, **kwargs)
+            decoder_out[0]
         return decoder_out
 
     def extract_features(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
@@ -248,7 +249,6 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
     def max_decoder_positions(self):
         """Maximum length supported by the decoder."""
         return self.decoder.max_positions()
-
 
 class FairseqModel(FairseqEncoderDecoderModel):
 
