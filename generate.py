@@ -91,12 +91,7 @@ def main(args):
         scorer = bleu.Scorer(tgt_dict.pad(), tgt_dict.eos(), tgt_dict.unk())
     num_sentences = 0
     has_target = True
-    len_diffs = {'total': 0, 'abs_total': 0, 'diff': [], 'num_shorter': 0, 'num_longer': 0}
-    g_hypo_str = []
-    g_src_str = []
-    g_tgt_str = []
-    g_hypo_tokens = []
-    g_alignment = []
+    
     with progress_bar.build_progress_bar(args, itr) as t:
         wps_meter = TimeMeter()
         for sample in t:
@@ -161,8 +156,7 @@ def main(args):
                         tgt_dict=tgt_dict,
                         remove_bpe=args.remove_bpe,
                     )
-                    g_hypo_str.append(hypo_str)
-                    g_hypo_tokens.append(hypo_tokens)
+
                     # g_alignment.append(alignment)
                     if len(g_hypo_str) == 10:
                         hypo_str = ' '.join(g_hypo_str)
@@ -179,14 +173,6 @@ def main(args):
                         #         hypo['positional_scores'].tolist(),
                         #     ))
                         # ))
-                        len_diff = len(hypo_tokens) - len(src_tokens)
-                        len_diffs['diff'].append(len_diff)
-                        if len_diff > 0:
-                            len_diffs['num_longer'] += 1
-                        elif len_diff < 0:
-                            len_diffs['num_shorter'] += 1
-                        len_diffs['total'] += len_diff
-                        len_diffs['abs_total'] += abs(len_diff)
                         
 
                         if args.print_alignment:
@@ -211,7 +197,6 @@ def main(args):
 
     print('| Translated {} sentences ({} tokens) in {:.1f}s ({:.2f} sentences/s, {:.2f} tokens/s)'.format(
         num_sentences, gen_timer.n, gen_timer.sum, num_sentences / gen_timer.sum, 1. / gen_timer.avg))
-    print('| Hypos length difference: {}'.format(len_diffs))
     if has_target:
         print('| Generate {} with beam={}: {}'.format(args.gen_subset, args.beam, scorer.result_string()))
     return scorer

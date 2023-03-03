@@ -59,13 +59,24 @@ def tokens2tags_depricate(dict, tokens, eod):
 def tokens2tags(dict, tokens, split_index):
     '''
         tokens: batched text, (batch, length)
+        return:
+            tok_tags: sequence of group tags
+            start_tag: start tag of sentence
     '''
     mask_tag = ~(tokens == dict.pad_index)
+    num_sent_lst = [torch.sum(doc == split_index) for doc in tokens]
     end_tag = (tokens == split_index).to(torch.int)
     start_tag = torch.roll(end_tag, 1, -1)
     start_tag[:, 0] = 1
-    tok_tags = torch.cumsum(start_tag, dim=1) * mask_tag.int()
-    return tok_tags
+    start_tag = start_tag * mask_tag.int()
+    tok_tags = torch.cumsum(start_tag, dim=1)
+    
+    sent_len_lst = []
+    for row in tokens:
+        sub_sents = torch.split(row, split_size_or_sections=(row == split_index).nonzero().squeeze() + 1)
+        sent_len_lst.append([len(sub_sent) for sub_sent in sub_sents])
+
+    return tok_tags, start_tag, num_sent_lst, sent_len_lst
 
 class BertLayerNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-12):
@@ -563,15 +574,22 @@ class GTransformerEncoder(FairseqEncoder):
                 - **encoder_padding_mask** (ByteTensor): the positions of
                   padding elements of shape `(batch, src_len)`
         """
+        # get group tags, length token mask
+        group_tags, start_tags, num_sent_lst, sent_len_lst = tokens2tags(self.dictionary, src_tokens, self.split_token)
+        max_sent_num = torch.max(group_tags)
+        len_tokens = src_tokens.new(src_tokens.size(0), max_sent_num).fill_(self.padding_idx)
+        for i, num in enumerate(num_sent_lst):
+            len_tokens[i, :num] = 0
+        len_tokens_padding_mask = len_tokens.eq(self.padding_idx)
+        len_tokens = self.embed_lengths(len_tokens)
+        
         # embed tokens and positions
-        src_tags = tokens2tags(self.dictionary, src_tokens, self.split_token)
-        local_attn_mask = src_tags.eq(self.padding_idx)
         x = self.embed_tokens(src_tokens)
         #assert (src_tokens.size(1) < self.embed_positions.weights.data.size(0))
         if self.embed_positions is not None:
             x = x + self.embed_positions(src_tokens)
         #len_tokens = self.embed_lengths(src_tokens.ne(self.padding_idx).sum(-1).unsqueeze(-1))   # If enabled, input of len token is src len
-        len_tokens = self.embed_lengths(src_tokens.new(src_tokens.size(0), 1).fill_(0))
+        
         x = torch.cat([len_tokens, x], dim=1)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
@@ -579,20 +597,20 @@ class GTransformerEncoder(FairseqEncoder):
         x = x.transpose(0, 1)
         # compute padding mask
         encoder_padding_mask = src_tokens.eq(self.padding_idx)
-        encoder_padding_mask = torch.cat([encoder_padding_mask.new(src_tokens.size(0), 1).fill_(0), encoder_padding_mask], dim=1)
+        encoder_padding_mask = torch.cat([len_tokens_padding_mask, encoder_padding_mask], dim=1)
         if not encoder_padding_mask.any():
             encoder_padding_mask = None
 
         # encoder layers
         for layer in self.layers:
-            x = layer(x, src_tags, encoder_padding_mask)
+            x = layer(x, group_tags, encoder_padding_mask)
         if self.normalize:
             x = self.layer_norm(x)
         
-        predicted_lengths_logits = torch.matmul(x[0, :, :], self.embed_lengths.weight.transpose(0, 1)).float()
-        predicted_lengths_logits[:, 0] += float('-inf')   # Cannot predict the len_token
+        predicted_lengths_logits = torch.matmul(x[:max_sent_num, :, :], self.embed_lengths.weight.transpose(0, 1)).float()
+        predicted_lengths_logits[:, :, 0] += float('-inf')   # Cannot predict the len_token
         predicted_lengths = F.log_softmax(predicted_lengths_logits, dim=-1)
-        x = x[1:, :, :]
+        x = x[max_sent_num:, :, :]
         
         if encoder_padding_mask is not None:
             encoder_padding_mask = encoder_padding_mask[:, 1:]
@@ -601,6 +619,7 @@ class GTransformerEncoder(FairseqEncoder):
             'encoder_out': x,  # T x B x C
             'encoder_padding_mask': encoder_padding_mask,  # B x T
             'predicted_lengths': predicted_lengths, # B x L
+            'sent_len_lst': sent_len_lst # multi src length
         }
 
     def reorder_encoder_out(self, encoder_out, new_order):

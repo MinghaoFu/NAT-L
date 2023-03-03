@@ -12,5 +12,4 @@ Europarl/TED/News: [https://github.com/sameenmaruf/selective-attn/tree/master/da
 
 ### Evaluation
     ./run.sh eval
-# LNAT-failure
-# LNAT-failure
+
