@@ -1,4 +1,4 @@
-# Non-autoregressive Transformer for long text generation 
+# Non-autoregressive Text generation 
 
 **Note: Uncompleted work in Shanghai ai lab, under guidance of Jiangtao Feng and Fei Yuan**
 ### Dataset from
