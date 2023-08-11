@@ -1,8 +1,13 @@
-# Non-autoregressive Text generation 
+# Non-Autoregressive Long Text Generation 
 
-**Note: Uncompleted work in Shanghai ai lab, under guidance of Jiangtao Feng and Fei Yuan**
+Explore Non-Autoregressive Transformer on Long Text Generation.
+
+**Note: Uncompleted research work in Shanghai AI Lab, under the guidance of Jiangtao Feng and Fei Yuan**
+
 ### Dataset from
-iwslt14, wmt raw/distilled: [https://github.com/harvardnlp/cascaded-generatio](https://github.com/harvardnlp/cascaded-generatio)
+
+Raw/distilled iwslt14/wmt : [https://github.com/harvardnlp/cascaded-generatio](https://github.com/harvardnlp/cascaded-generatio)
+
 Europarl/TED/News: [https://github.com/sameenmaruf/selective-attn/tree/master/data](https://github.com/sameenmaruf/selective-attn/tree/master/data), reordered in ./data/prepare-doc
 
 ### Preprocess data
