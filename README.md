@@ -2,7 +2,7 @@
 
 Explore Non-Autoregressive Transformer on Long Text Generation.
 
-**Note: Uncompleted research work in Shanghai AI Lab, under the guidance of Jiangtao Feng and Fei Yuan**
+**Note: Uncompleted research work in [Shanghai AI Lab](https://www.shlab.org.cn/en), under the guidance of [Jiangtao Feng](https://jiangtaofeng.github.io/) and Fei Yuan**
 
 ### Dataset from
 
