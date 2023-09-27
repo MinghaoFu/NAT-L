@@ -6,7 +6,7 @@ Explore Non-Autoregressive Transformer on Long Text Generation.
 
 ### Dataset from
 
-Raw/distilled iwslt14/wmt : [https://github.com/harvardnlp/cascaded-generatio](https://github.com/harvardnlp/cascaded-generatio)
+Raw/distilled iwslt14/wmt : [https://github.com/harvardnlp/cascaded-generatio](https://github.com/MinghaoFu/cascaded-generation-dataset-collection-)
 
 Europarl/TED/News: [https://github.com/sameenmaruf/selective-attn/tree/master/data](https://github.com/sameenmaruf/selective-attn/tree/master/data), reordered in ./data/prepare-doc
 
